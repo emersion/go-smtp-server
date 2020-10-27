@@ -13,7 +13,7 @@ import (
 	"github.com/emersion/go-sasl"
 )
 
-var errTCPAndLMTP = errors.New("smtp: cannot start LMTP server listening on a TCP socket")
+var errNoAddressSpecified = errors.New("lmtp: no address was defined and no default port exists for this protocol")
 
 // A function that creates SASL servers.
 type SaslServerFactory func(conn *Conn) sasl.Server
@@ -30,9 +30,13 @@ type Server struct {
 	Addr string
 	// The server TLS configuration.
 	TLSConfig *tls.Config
-	// Enable LMTP mode, as defined in RFC 2033. LMTP mode cannot be used with a
-	// TCP listener.
+	// Enable LMTP mode, as defined in RFC 2033. While it is possible to run LMTP over TCP, it is not advisable to
+	// run a LMTP server on the public internet, as LMTP was only designed for local communication.
 	LMTP bool
+	// The network type this server listens on.
+	// It can be "tcp" for TCP/IP sockets, or "unix" for UNIX domain sockets.
+	// If it is blank, it defaults to "tcp" for SMTP servers, and "unix" for LMTP servers, to keep the previous behavior.
+	Network string
 
 	Domain            string
 	MaxRecipients     int
@@ -172,48 +176,72 @@ func (s *Server) handleConn(c *Conn) error {
 	}
 }
 
-// ListenAndServe listens on the network address s.Addr and then calls Serve
-// to handle requests on incoming connections.
-//
-// If s.Addr is blank and LMTP is disabled, ":smtp" is used.
-func (s *Server) ListenAndServe() error {
-	network := "tcp"
-	if s.LMTP {
+// Listen configures a listener according to the server configuration, without TLS
+// This listener can then be passed to Serve. If access to the listener is not needed, then the
+// combined function ListenAndServe can be used
+func (s *Server) Listen() (net.Listener, error) {
+	return s.listen(false)
+}
+
+// ListenTLS configures a listener according to the server configuration, with TLS
+// This listener can then be passed to Serve. If access to the listener is not needed, then the
+// combined function ListenAndServe can be used
+func (s *Server) ListenTLS() (net.Listener, error) {
+	return s.listen(true)
+}
+
+func (s *Server) listen(useTLS bool) (net.Listener, error) {
+	network := s.Network
+	if !s.LMTP && network == "" {
+		network = "tcp"
+	} else if s.LMTP && network == "" {
 		network = "unix"
 	}
 
 	addr := s.Addr
 	if !s.LMTP && addr == "" {
 		addr = ":smtp"
+	} else if s.LMTP && addr == "" {
+		return nil, errNoAddressSpecified
 	}
 
-	l, err := net.Listen(network, addr)
+	var l net.Listener
+	var err error
+	if useTLS {
+		l, err = tls.Listen(network, addr, s.TLSConfig)
+	} else {
+		l, err = net.Listen(network, addr)
+	}
+
+	if err != nil {
+		return nil, err
+	}
+	return l, nil
+}
+
+// ListenAndServe listens on the network address s.Addr and then calls Serve
+// to handle requests on incoming connections.
+//
+// If s.Addr is blank and LMTP is disabled, ":smtp" is used.
+// If s.Addr is blank and LMTP is enabled, an error is returned, as there is no default port for LMTP
+func (s *Server) ListenAndServe() error {
+	l, err := s.listen(false)
 	if err != nil {
 		return err
 	}
-
 	return s.Serve(l)
 }
 
 // ListenAndServeTLS listens on the TCP network address s.Addr and then calls
 // Serve to handle requests on incoming TLS connections.
 //
-// If s.Addr is blank, ":smtps" is used.
+// If s.Addr is blank in SMTP mode, ":smtps" is used.
+// If s.Addr is blank in LMTP mode, an error is returned, as there is no default port for lmtps
 func (s *Server) ListenAndServeTLS() error {
-	if s.LMTP {
-		return errTCPAndLMTP
-	}
-
-	addr := s.Addr
-	if addr == "" {
-		addr = ":smtps"
-	}
-
-	l, err := tls.Listen("tcp", addr, s.TLSConfig)
+	l, err := s.listen(true)
 	if err != nil {
 		return err
 	}
-
 	return s.Serve(l)
 }
 

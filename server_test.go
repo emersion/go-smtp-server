@@ -3,14 +3,13 @@ package smtp_test
 import (
 	"bufio"
 	"errors"
+	"github.com/emersion/go-smtp"
 	"io"
 	"io/ioutil"
 	"log"
 	"net"
 	"strings"
 	"testing"
-
-	"github.com/emersion/go-smtp"
 )
 
 type message struct {
@@ -1114,5 +1113,28 @@ func TestServer_Chunking_Binarymime(t *testing.T) {
 	}
 	if want := "Hey <3\r\nHey :3\r\n"; string(msg.Data) != want {
 		t.Fatal("Invalid mail data:", string(msg.Data), msg.Data)
+	}
+}
+
+func TestServer_SMTP_NetworkDefaultBehaviorTCP(t *testing.T) {
+	be := new(backend)
+	s := smtp.NewServer(be)
+	s.Domain = "localhost"
+	s.AllowInsecureAuth = true
+
+	s.Network = ""
+	s.LMTP = false
+
+	s.Addr = "127.0.0.1:0"
+
+	l, err := s.Listen()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+
+	network := l.Addr().Network()
+	if network != "tcp" {
+		t.Fatalf("expected tcp, got %s", network)
 	}
 }

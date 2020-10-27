@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"errors"
 	"io"
+	"net"
+	"os"
 	"strings"
 	"testing"
 
@@ -193,5 +195,96 @@ func TestServer_LMTP_DuplicatedRcpt(t *testing.T) {
 
 	if len(be.messages) != 0 || len(be.anonmsgs) != 1 {
 		t.Fatal("Invalid number of sent messages:", be.messages, be.anonmsgs)
+	}
+}
+
+func TestServer_LMTP_NetworkDefaultBehaviorUnix(t *testing.T) {
+	be := new(backend)
+	s := smtp.NewServer(be)
+	s.Domain = "localhost"
+	s.AllowInsecureAuth = true
+
+	s.Network = ""
+	s.LMTP = true
+	s.Addr = "./testsocket"
+
+	l, err := s.Listen()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove("./testsocket")
+	defer l.Close()
+
+	network := l.Addr().Network()
+	if network != "unix" {
+		t.Fatalf("expected network unix, got %s", network)
+	}
+}
+
+func TestServer_LMTP_TCP(t *testing.T) {
+	be := new(backend)
+	s := smtp.NewServer(be)
+	s.Domain = "localhost"
+	s.AllowInsecureAuth = true
+
+	s.Network = "tcp"
+	s.LMTP = true
+	s.Addr = "127.0.0.1:0"
+
+	l, err := s.Listen()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	go s.Serve(l)
+
+	var c net.Conn
+	for i := 0; i < 5; i++ {
+		c, err = net.Dial("tcp", l.Addr().String())
+		if err == nil {
+			break
+		}
+	}
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	scanner := bufio.NewScanner(c)
+	scanner.Scan()
+	if scanner.Text() != "220 localhost ESMTP Service Ready" {
+		t.Fatal("Invalid greeting:", scanner.Text())
+	}
+}
+
+func TestServer_LMTP_NoAddressError(t *testing.T) {
+	be := new(backend)
+	s := smtp.NewServer(be)
+	s.Domain = "localhost"
+	s.AllowInsecureAuth = true
+
+	s.Network = "tcp"
+	s.LMTP = true
+	s.Addr = ""
+
+	err := s.ListenAndServe()
+	if err == nil || err.Error() != "lmtp: no address was defined and no default port exists for this protocol" {
+		t.Fatalf("expected no default port error, got %v", err)
+	}
+}
+
+func TestServer_LMTP_TLS_NoAddressError(t *testing.T) {
+	be := new(backend)
+	s := smtp.NewServer(be)
+	s.Domain = "localhost"
+	s.AllowInsecureAuth = true
+
+	s.Network = "tcp"
+	s.LMTP = true
+	s.Addr = ""
+
+	err := s.ListenAndServeTLS()
+	if err == nil || err.Error() != "lmtp: no address was defined and no default port exists for this protocol" {
+		t.Fatalf("expected no default port error, got %v", err)
 	}
 }
