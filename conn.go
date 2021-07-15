@@ -331,7 +331,7 @@ func (c *Conn) handleMail(arg string) {
 	}
 	from = strings.Trim(from, "<>")
 
-	opts := MailOptions{}
+	opts := &MailOptions{}
 
 	c.binarymime = false
 	// This is where the Conn may put BODY=8BITMIME, but we already

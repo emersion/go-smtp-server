@@ -27,7 +27,7 @@ func (bkd *backend) AnonymousLogin(state *smtp.ConnectionState) (smtp.Session, e
 
 type session struct{}
 
-func (s *session) Mail(from string, opts smtp.MailOptions) error {
+func (s *session) Mail(from string, opts *smtp.MailOptions) error {
 	return nil
 }
 
